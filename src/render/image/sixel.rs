@@ -151,6 +151,13 @@ pub(crate) fn dispatch(
 
     PAYLOAD_SCRATCH.with_borrow_mut(|payload| {
         payload.clear();
+        payload.extend_from_slice(b"\x1b[0m");
+        for row in 0..vis_h {
+            let y = vis_tl.y + row as i32;
+            payload.extend_from_slice(
+                format!("\x1b[{};{}H\x1b[{}X", y + 1, vis_tl.x + 1, vis_w).as_bytes(),
+            );
+        }
         payload.extend_from_slice(
             format!("\x1b[{};{}H", vis_tl.y + 1, vis_tl.x + 1).as_bytes(),
         );
