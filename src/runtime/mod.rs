@@ -1198,6 +1198,42 @@ enum PopupHitResult {
     Miss,
 }
 
+fn write_all_retrying_would_block(
+    writer: &mut dyn Write,
+    mut bytes: &[u8],
+) -> std::io::Result<()> {
+    while !bytes.is_empty() {
+        match writer.write(bytes) {
+            Ok(0) => {
+                return Err(std::io::Error::new(
+                    std::io::ErrorKind::WriteZero,
+                    "failed to write terminal output",
+                ));
+            }
+            Ok(n) => bytes = &bytes[n..],
+            Err(err) if err.kind() == std::io::ErrorKind::Interrupted => continue,
+            Err(err) if err.kind() == std::io::ErrorKind::WouldBlock => {
+                std::thread::sleep(std::time::Duration::from_millis(1));
+            }
+            Err(err) => return Err(err),
+        }
+    }
+    Ok(())
+}
+
+fn flush_retrying_would_block(writer: &mut dyn Write) -> std::io::Result<()> {
+    loop {
+        match writer.flush() {
+            Ok(()) => return Ok(()),
+            Err(err) if err.kind() == std::io::ErrorKind::Interrupted => continue,
+            Err(err) if err.kind() == std::io::ErrorKind::WouldBlock => {
+                std::thread::sleep(std::time::Duration::from_millis(1));
+            }
+            Err(err) => return Err(err),
+        }
+    }
+}
+
 impl Runtime {
     fn popup_hit_test(&self, pos: Vec2<i32>) -> PopupHitResult {
         if let Some(i) = self.popups.len().checked_sub(1) {
@@ -1481,8 +1517,8 @@ impl Runtime {
 
         dirty_layout();
 
-        self.buffer.write_all(self.buf.as_bytes())?;
-        self.buffer.flush()?;
+        write_all_retrying_would_block(&mut self.buffer, self.buf.as_bytes())?;
+        flush_retrying_would_block(&mut self.buffer)?;
         Ok(())
     }
 
@@ -1527,8 +1563,8 @@ impl Runtime {
         output::disable_bracketed_paste(&mut self.buf);
         #[cfg(feature = "harmonious")]
         output::disable_color_scheme_detection(&mut self.buf);
-        self.buffer.write_all(self.buf.as_bytes())?;
-        self.buffer.flush()?;
+        write_all_retrying_would_block(&mut self.buffer, self.buf.as_bytes())?;
+        flush_retrying_would_block(&mut self.buffer)?;
         ansi::disable_raw_mode()?;
         Ok(())
     }
@@ -2639,7 +2675,7 @@ impl Runtime {
         if self.renderer.take_full_dirty() {
             output::clear_screen(&mut self.buf);
         }
-        self.buffer.write_all(self.buf.as_bytes())?;
+        write_all_retrying_would_block(&mut self.buffer, self.buf.as_bytes())?;
         self.renderer.clear_defer_queue();
         self.renderer.render_to_queue(root, Vec2::of(0i32), &mut self.buffer);
         seed_popup_queue(&mut self.renderer, &mut self.buffer, &self.popups);
@@ -2674,8 +2710,8 @@ impl Runtime {
                 output::hide_cursor(&mut self.buf);
             }
         }
-        self.buffer.write_all(self.buf.as_bytes())?;
-        self.buffer.flush()?;
+        write_all_retrying_would_block(&mut self.buffer, self.buf.as_bytes())?;
+        flush_retrying_would_block(&mut self.buffer)?;
         Ok(())
     }
 
@@ -2763,4 +2799,3 @@ fn seed_popup_queue(
         ctx.queue_popup(&*popup.content, pos);
     }
 }
-
